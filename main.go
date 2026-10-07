@@ -1,5 +1,5 @@
-// Command brewbar is a tiny coffee-ordering app used to demo agent-driven
-// pull requests with ephemeral Miren previews.
+// Command brewbar is a tiny coffee-ordering app. It is the example app for
+// agent-reviewed pull requests on ephemeral Miren previews.
 package main
 
 import (

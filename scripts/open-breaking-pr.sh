@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Opens the Act 2 pull request: a "tidy-up" that renames every *_cents JSON
-# field to camelCase. The Go code compiles and the unit tests still pass, but
-# the live API no longer matches docs/api.md and the web page shows $NaN.
-#
-# Use this when you want Act 2 to be deterministic instead of asking the local
-# agent to make the change live.
+# Opens a pull request that the agent review should reject: a "tidy-up" that
+# renames every *_cents JSON field to camelCase. The Go code compiles and the
+# unit tests still pass, but the live API no longer matches docs/api.md and the
+# web page shows $NaN for every price.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
