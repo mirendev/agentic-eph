@@ -73,9 +73,10 @@ You need the `miren` CLI logged in to the cluster you'll demo on, and the
 2. `preview` runs `miren deploy --ephemeral pr-<number> --ttl 24h` through
    `mirendev/actions/deploy`, then waits for `/healthz` to answer.
 3. `agent-review` runs Claude Code through `anthropics/claude-code-action`. The
-   agent can read the repo, run `git diff` and `git log`, run `curl` and `jq`,
-   and write files under `.agent/`. It cannot push, comment, or merge.
-4. The agent writes `.agent/verdict.json`:
+   agent can read the repo, run read-only `git` commands, and run `curl` and
+   `jq`. It can't edit files, push, comment, or merge.
+4. The agent returns its verdict as structured output (the action's
+   `--json-schema` option), so the workflow gets checked JSON like this:
 
    ```json
    {
@@ -87,7 +88,9 @@ You need the `miren` CLI logged in to the cluster you'll demo on, and the
    }
    ```
 
-5. The workflow posts the verdict as a pull request comment. On `merge` it
+5. A follow-up step lists any tool calls the agent tried but wasn't allowed
+   to make, in the job summary. Check there first if a run goes wrong.
+6. The workflow posts the verdict as a pull request comment. On `merge` it
    squash-merges with `MERGE_TOKEN`. On `reject` it fails the check.
 
 ## Limits worth knowing

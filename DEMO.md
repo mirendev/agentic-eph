@@ -18,7 +18,7 @@ The app is **Brewbar**, a one-page coffee-ordering site with a small JSON API.
 | Author agent | Claude Code on the presenter's laptop | Writes the change and opens the pull request |
 | `unit-tests` job | GitHub Actions | `go vet` and `go test` |
 | `preview` job | GitHub Actions → Miren | Deploys the pull request as an ephemeral version named `pr-<number>` |
-| `agent-review` job | GitHub Actions | A second Claude agent tests the preview with `curl` and writes a verdict |
+| `agent-review` job | GitHub Actions | A second Claude agent tests the preview with `curl` and returns a verdict |
 | Merge step | GitHub Actions | Merges if the verdict says `merge` |
 | `Deploy` workflow | GitHub Actions → Miren | Ships `main` to production after the merge |
 
@@ -36,7 +36,7 @@ after a set time, 24 hours here.
                            │                                        ▲
                        agent-review ── curl, compare to contract ───┘
                            │
-                       verdict.json ── merge ──▶ main ── Deploy ─▶ brewbar…  (production)
+                       verdict ─────── merge ──▶ main ── Deploy ─▶ brewbar…  (production)
 ```
 
 ## Before you go on stage
@@ -104,7 +104,8 @@ production. It deletes itself in 24 hours."
 
 ### 3. The CI agent tests the live preview
 
-**Show:** the `agent-review` job log as it runs.
+**Show:** the `agent-review` job running. The log only shows the agent's
+final result, not each step, so talk over it rather than reading it.
 
 **Say:** "Now a second agent takes over. It isn't reading the code and guessing.
 It reads the contract, works out the prices it expects by hand, sends real
@@ -112,20 +113,17 @@ requests to the preview, and compares. It also checks that every field the web
 page reads is still in the responses. Then it tests the new feature the pull
 request claims to add."
 
-Things to point at in the log as they scroll by:
-
-- It computing an expected total and then checking the response against it.
-- It trying a `size: "large"` order on the preview.
-- It writing `.agent/verdict.json`.
-
-**Say:** "The agent decides, but it doesn't hold the merge button. It writes a
-verdict file. The workflow reads that and does the merge. That keeps the
-agent's permissions small and leaves an audit trail."
+**Say:** "The agent decides, but it doesn't hold the merge button. It can't
+even edit files. It hands back a structured verdict, and the workflow reads
+that and does the merge. That keeps the agent's permissions small and leaves
+an audit trail."
 
 ### 4. The merge and the production deploy
 
 **Show:** the comment the workflow posted on the pull request: a summary and a
-table of every check with what was sent and what came back.
+table of every check with what was sent and what came back. This is where you
+point at the agent's work: the expected total it computed, and the
+`size: "large"` order it tried on the preview.
 
 **Show:** the pull request is merged. Open the **Deploy** run that started from
 the merge.
@@ -197,6 +195,7 @@ The bad version only ever lived in a throwaway preview."
 |---|---|
 | `preview` fails with an authentication error | The cluster's CI binding doesn't allow `pull_request` events. See step 3 of the README setup. |
 | Deploy works but the job has no URL | The deploy action reads the URL from `miren deploy` output. Run `miren app versions -a brewbar` and open the preview by hand. |
+| Agent returns no verdict | Open the job summary. The **Blocked agent tool calls** section lists commands the agent wasn't allowed to run. |
 | Agent says `reject` on the good change | Read its failed checks aloud. That is still a working demo of the gate. Then move on to Act 2. |
 | Merge step fails with "not permitted" | `MERGE_TOKEN` is missing or lacks write access to contents and pull requests. |
 | Merge works but production doesn't deploy | The merge used the built-in `GITHUB_TOKEN`, which can't trigger other workflows. Check `MERGE_TOKEN` is set. |
