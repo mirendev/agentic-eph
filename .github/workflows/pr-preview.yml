@@ -193,11 +193,21 @@ jobs:
       # Merging with MERGE_TOKEN rather than the built-in GITHUB_TOKEN matters:
       # GitHub doesn't start new workflow runs for pushes made with
       # GITHUB_TOKEN, so the production deploy on main would never fire.
+      #
+      # This calls the REST merge endpoint instead of `gh pr merge`, which also
+      # reads commit check status and so needs more token permissions. Passing
+      # the head SHA makes GitHub refuse the merge if anything was pushed after
+      # the agent tested this commit.
       - name: Merge
         if: steps.verdict.outputs.decision == 'merge'
         env:
           GH_TOKEN: ${{ secrets.MERGE_TOKEN }}
-        run: gh pr merge "$PR_NUMBER" --squash --delete-branch
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f merge_method=squash -f sha="$HEAD_SHA"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$HEAD_REF"
 
       - name: Fail the check on reject
         if: steps.verdict.outputs.decision == 'reject'
