@@ -17,6 +17,8 @@
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
     input[type=number] { width: 64px; padding: 4px 6px; }
+    select { padding: 4px 6px; }
+    .controls { display: flex; gap: 8px; }
     input[type=text] { width: 100%; padding: 6px 8px; }
     button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-size: 16px; cursor: pointer; }
     #quote .row.total { font-weight: 700; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
@@ -40,21 +42,33 @@
 
 <script>
   const dollars = (cents) => "$" + (cents / 100).toFixed(2);
+  const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
   async function loadMenu() {
     const res = await fetch("/api/menu");
     const { items } = await res.json();
     document.getElementById("menu").innerHTML = items.map((m) => `
-      <label class="row">
+      <div class="row" data-id="${m.id}">
         <span>${m.name} <small>${dollars(m.price_cents)}</small></span>
-        <input type="number" min="0" max="20" value="0" data-id="${m.id}">
-      </label>`).join("");
+        <span class="controls">
+          <select aria-label="${m.name} size">
+            <option value="small">Small (−$0.50)</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large (+$0.75)</option>
+          </select>
+          <input type="number" min="0" max="20" value="0" aria-label="${m.name} quantity">
+        </span>
+      </div>`).join("");
   }
 
   document.getElementById("order").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const items = [...document.querySelectorAll("#menu input")]
-      .map((el) => ({ id: el.dataset.id, qty: Number(el.value) }))
+    const items = [...document.querySelectorAll("#menu .row")]
+      .map((row) => ({
+        id: row.dataset.id,
+        qty: Number(row.querySelector("input").value),
+        size: row.querySelector("select").value,
+      }))
       .filter((l) => l.qty > 0);
     const code = document.getElementById("code").value.trim();
 
@@ -75,7 +89,7 @@
     errEl.textContent = "";
     quoteEl.hidden = false;
     quoteEl.innerHTML =
-      data.items.map((l) => `<div class="row"><span>${l.qty} × ${l.name}</span><span>${dollars(l.line_cents)}</span></div>`).join("") +
+      data.items.map((l) => `<div class="row"><span>${l.qty} × ${capitalize(l.size)} ${l.name}</span><span>${dollars(l.line_cents)}</span></div>`).join("") +
       `<div class="row"><span>Subtotal</span><span>${dollars(data.subtotal_cents)}</span></div>` +
       (data.discount_cents ? `<div class="row"><span>Discount</span><span>−${dollars(data.discount_cents)}</span></div>` : "") +
       `<div class="row"><span>Tax</span><span>${dollars(data.tax_cents)}</span></div>` +
