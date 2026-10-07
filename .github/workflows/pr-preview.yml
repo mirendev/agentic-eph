@@ -86,14 +86,18 @@ jobs:
           fetch-depth: 0 # the agent diffs against origin/main
 
       - name: Agent tests the preview
+        id: agent
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
-          claude_args: >-
+          # --json-schema makes the agent's final answer come back as the
+          # structured_output step output, so it never needs to write a file.
+          claude_args: |
             --model claude-sonnet-5-5
             --max-turns 40
-            --allowedTools "Bash(curl:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(jq:*),Read,Glob,Grep,Write(.agent/**)"
+            --allowedTools "Bash(curl:*),Bash(jq:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Read,Glob,Grep"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["decision","summary","checks"],"properties":{"decision":{"type":"string","enum":["merge","reject"]},"summary":{"type":"string"},"checks":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["name","result","detail"],"properties":{"name":{"type":"string"},"result":{"type":"string","enum":["pass","fail"]},"detail":{"type":"string"}}}}}}'
           prompt: |
             You are the release gate for Brewbar, a small coffee-ordering web app.
 
@@ -132,27 +136,50 @@ jobs:
                - "reject" if anything is broken, or if you could not verify
                  the change.
 
-            Write your decision to `.agent/verdict.json` as JSON with exactly
-            this shape, and do not edit any other file:
+            Your shell access is limited to curl, jq, and read-only git
+            commands. Use the Read tool to read files. Run one command at a
+            time. Piping curl into jq is fine. Loops, scripts, and `&&`
+            chains will be blocked. Do the arithmetic yourself.
 
+            Return your decision as the structured output:
+            - decision: "merge" or "reject".
+            - summary: two or three plain sentences a teammate can read in
+              ten seconds.
+            - checks: one entry per thing you tested, with what you sent and
+              what came back in `detail`.
+
+            Do not edit files, and do not merge, comment on, or approve the
+            pull request yourself. The workflow does that from your decision.
+
+      # Lists any tool calls the agent was blocked from making, so a bad run
+      # explains itself without turning on the action's full (public) output.
+      - name: Show blocked agent tool calls
+        if: always() && steps.agent.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: |
+          denials=$(jq -c '[.[] | select(.type == "result") | .permission_denials[]? | {tool: .tool_name, input: .tool_input}]' "$EXECUTION_FILE")
+          echo "$denials" | jq .
+          if [[ "$denials" != "[]" ]]; then
             {
-              "decision": "merge" or "reject",
-              "summary": "Two or three plain sentences a teammate can read in ten seconds.",
-              "checks": [
-                { "name": "short name", "result": "pass" or "fail", "detail": "what you sent and what came back" }
-              ]
-            }
-
-            Do not merge, comment on, or approve the pull request yourself. The
-            workflow does that from your verdict.
+              echo "### Blocked agent tool calls"
+              echo '```json'
+              echo "$denials" | jq .
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Read the verdict
         id: verdict
+        env:
+          VERDICT: ${{ steps.agent.outputs.structured_output }}
         run: |
-          if [[ ! -f .agent/verdict.json ]]; then
-            echo "::error::The agent did not write a verdict"
+          mkdir -p .agent
+          if [[ -z "$VERDICT" ]]; then
+            echo "::error::The agent returned no verdict"
             exit 1
           fi
+          echo "$VERDICT" > .agent/verdict.json
           jq -e '(.decision == "merge" or .decision == "reject") and (.checks | type == "array")' .agent/verdict.json
           echo "decision=$(jq -r .decision .agent/verdict.json)" >> "$GITHUB_OUTPUT"
           jq -r -f .github/agent/report.jq .agent/verdict.json > .agent/report.md
