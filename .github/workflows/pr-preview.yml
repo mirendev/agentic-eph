@@ -1,0 +1,179 @@
+# On every pull request:
+#   1. run the unit tests,
+#   2. deploy the PR to an ephemeral Miren preview,
+#   3. have an agent test the running preview and decide merge / reject,
+#   4. post the agent's report and merge if it said to.
+name: PR preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# A new push to the PR cancels the run for the previous push.
+concurrency:
+  group: pr-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PR_NUMBER: ${{ github.event.number }}
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  preview:
+    needs: unit-tests
+    # Fork PRs don't get secrets, so they can't deploy. Same-repo PRs only.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets the deploy action log in to Miren with GitHub's OIDC token
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: deploy
+        uses: mirendev/actions/deploy@main
+        with:
+          cluster: ${{ secrets.MIREN_CLUSTER }}
+          app: brewbar
+          ephemeral: pr-${{ github.event.number }}
+          ttl: 24h
+
+      - name: Wait for the preview to answer
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          if [[ -z "$PREVIEW_URL" ]]; then
+            echo "::error::Deploy did not report a preview URL"
+            exit 1
+          fi
+          for _ in $(seq 1 30); do
+            if curl -fsS "$PREVIEW_URL/healthz"; then
+              echo
+              echo "### Preview is up: $PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Preview never became healthy"
+          exit 1
+
+  agent-review:
+    needs: preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    env:
+      PREVIEW_URL: ${{ needs.preview.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the agent diffs against origin/main
+
+      - name: Agent tests the preview
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --model claude-sonnet-5-5
+            --max-turns 40
+            --allowedTools "Bash(curl:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(jq:*),Read,Glob,Grep,Write(.agent/**)"
+          prompt: |
+            You are the release gate for Brewbar, a small coffee-ordering web app.
+
+            Pull request #${{ github.event.number }}
+            has been deployed to a temporary preview environment at:
+
+                ${{ needs.preview.outputs.url }}
+
+            Decide whether this pull request is safe to merge into main. Base the
+            decision on what the running preview actually does, not only on
+            reading the code.
+
+            1. Understand the change.
+               - `git log --oneline origin/main..HEAD`
+               - `git diff origin/main...HEAD`
+            2. Read `docs/api.md`. It is the public API contract. The web page
+               (`static/index.html`) and a separately released mobile app depend
+               on it. Adding endpoints or optional fields is fine. Renaming,
+               removing, or changing the meaning of an existing field or endpoint
+               is a breaking change, even if the docs were edited to match.
+            3. Test the live preview with curl. At minimum:
+               - `GET /healthz` returns 200.
+               - `GET /api/menu` returns the documented shape.
+               - `POST /api/orders` happy path: work out the expected
+                 subtotal, discount, tax, and total yourself from the pricing
+                 rules in the contract, and compare them to the response.
+               - A discount code, and each documented error case with its
+                 documented status code.
+               - `GET /` serves the page, and every JSON field the page's
+                 JavaScript reads is present in the live responses.
+               - Whatever new behavior this pull request adds, exercised for
+                 real against the preview.
+            4. Decide.
+               - "merge" only if the change works on the preview as described
+                 and nothing in the existing contract broke.
+               - "reject" if anything is broken, or if you could not verify
+                 the change.
+
+            Write your decision to `.agent/verdict.json` as JSON with exactly
+            this shape, and do not edit any other file:
+
+            {
+              "decision": "merge" or "reject",
+              "summary": "Two or three plain sentences a teammate can read in ten seconds.",
+              "checks": [
+                { "name": "short name", "result": "pass" or "fail", "detail": "what you sent and what came back" }
+              ]
+            }
+
+            Do not merge, comment on, or approve the pull request yourself. The
+            workflow does that from your verdict.
+
+      - name: Read the verdict
+        id: verdict
+        run: |
+          if [[ ! -f .agent/verdict.json ]]; then
+            echo "::error::The agent did not write a verdict"
+            exit 1
+          fi
+          jq -e '(.decision == "merge" or .decision == "reject") and (.checks | type == "array")' .agent/verdict.json
+          echo "decision=$(jq -r .decision .agent/verdict.json)" >> "$GITHUB_OUTPUT"
+          jq -r -f .github/agent/report.jq .agent/verdict.json > .agent/report.md
+          cat .agent/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post the report on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "$PR_NUMBER" --body-file .agent/report.md
+
+      # Merging with MERGE_TOKEN rather than the built-in GITHUB_TOKEN matters:
+      # GitHub doesn't start new workflow runs for pushes made with
+      # GITHUB_TOKEN, so the production deploy on main would never fire.
+      - name: Merge
+        if: steps.verdict.outputs.decision == 'merge'
+        env:
+          GH_TOKEN: ${{ secrets.MERGE_TOKEN }}
+        run: gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+      - name: Fail the check on reject
+        if: steps.verdict.outputs.decision == 'reject'
+        run: |
+          echo "::error::Agent rejected this pull request. See the PR comment for details."
+          exit 1

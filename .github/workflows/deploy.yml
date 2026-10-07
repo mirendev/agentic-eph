@@ -1,0 +1,33 @@
+# Deploys main to production whenever it changes, including after the agent
+# merges a pull request.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: deploy
+        uses: mirendev/actions/deploy@main
+        with:
+          cluster: ${{ secrets.MIREN_CLUSTER }}
+          app: brewbar
+
+      - env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          echo "### Production: $URL" >> "$GITHUB_STEP_SUMMARY"

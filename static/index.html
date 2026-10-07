@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brewbar</title>
+  <style>
+    :root { --bg: #faf7f2; --fg: #2b2118; --muted: #7a6a5c; --accent: #8a4b1f; --card: #fff; --line: #e6ddd2; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1b1612; --fg: #f1e9df; --muted: #b3a291; --accent: #e09a5f; --card: #261f19; --line: #3a3028; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    main { max-width: 560px; margin: 0 auto; padding: 32px 16px; }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    p.sub { margin: 0 0 24px; color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+    input[type=number] { width: 64px; padding: 4px 6px; }
+    input[type=text] { width: 100%; padding: 6px 8px; }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-size: 16px; cursor: pointer; }
+    #quote .row.total { font-weight: 700; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
+    #error { color: #c0392b; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Brewbar</h1>
+  <p class="sub">Pick your drinks and get a price.</p>
+
+  <form id="order" class="card">
+    <div id="menu"></div>
+    <div class="row"><input type="text" id="code" placeholder="Discount code (optional)"></div>
+    <div class="row"><button type="submit">Get quote</button></div>
+  </form>
+
+  <div id="quote" class="card" hidden></div>
+  <p id="error" role="alert"></p>
+</main>
+
+<script>
+  const dollars = (cents) => "$" + (cents / 100).toFixed(2);
+
+  async function loadMenu() {
+    const res = await fetch("/api/menu");
+    const { items } = await res.json();
+    document.getElementById("menu").innerHTML = items.map((m) => `
+      <label class="row">
+        <span>${m.name} <small>${dollars(m.price_cents)}</small></span>
+        <input type="number" min="0" max="20" value="0" data-id="${m.id}">
+      </label>`).join("");
+  }
+
+  document.getElementById("order").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const items = [...document.querySelectorAll("#menu input")]
+      .map((el) => ({ id: el.dataset.id, qty: Number(el.value) }))
+      .filter((l) => l.qty > 0);
+    const code = document.getElementById("code").value.trim();
+
+    const res = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items, code: code || undefined }),
+    });
+    const data = await res.json();
+    const quoteEl = document.getElementById("quote");
+    const errEl = document.getElementById("error");
+
+    if (!res.ok) {
+      quoteEl.hidden = true;
+      errEl.textContent = data.error;
+      return;
+    }
+    errEl.textContent = "";
+    quoteEl.hidden = false;
+    quoteEl.innerHTML =
+      data.items.map((l) => `<div class="row"><span>${l.qty} × ${l.name}</span><span>${dollars(l.line_cents)}</span></div>`).join("") +
+      `<div class="row"><span>Subtotal</span><span>${dollars(data.subtotal_cents)}</span></div>` +
+      (data.discount_cents ? `<div class="row"><span>Discount</span><span>−${dollars(data.discount_cents)}</span></div>` : "") +
+      `<div class="row"><span>Tax</span><span>${dollars(data.tax_cents)}</span></div>` +
+      `<div class="row total"><span>Total</span><span>${dollars(data.total_cents)}</span></div>`;
+  });
+
+  loadMenu();
+</script>
+</body>
+</html>
