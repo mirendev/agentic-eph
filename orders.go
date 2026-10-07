@@ -33,9 +33,20 @@ const taxBasisPoints = 875
 
 const maxQty = 20
 
+// sizeAdjustCents is how much each drink size adds to the menu price.
+// Medium is the menu price and the default when no size is given.
+var sizeAdjustCents = map[string]int{
+	"small":  -50,
+	"medium": 0,
+	"large":  75,
+}
+
+const defaultSize = "medium"
+
 type OrderLine struct {
-	ID  string `json:"id"`
-	Qty int    `json:"qty"`
+	ID   string `json:"id"`
+	Qty  int    `json:"qty"`
+	Size string `json:"size,omitempty"`
 }
 
 type OrderRequest struct {
@@ -47,6 +58,7 @@ type QuotedLine struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Qty       int    `json:"qty"`
+	Size      string `json:"size"`
 	UnitCents int    `json:"unit_cents"`
 	LineCents int    `json:"line_cents"`
 }
@@ -86,12 +98,22 @@ func quoteOrder(req OrderRequest) (Quote, error) {
 		if line.Qty < 1 || line.Qty > maxQty {
 			return Quote{}, fmt.Errorf("qty for %q must be between 1 and %d", line.ID, maxQty)
 		}
-		lineCents := item.PriceCents * line.Qty
+		size := line.Size
+		if size == "" {
+			size = defaultSize
+		}
+		adjust, ok := sizeAdjustCents[size]
+		if !ok {
+			return Quote{}, fmt.Errorf("unknown size %q for %q", line.Size, line.ID)
+		}
+		unitCents := item.PriceCents + adjust
+		lineCents := unitCents * line.Qty
 		q.Items = append(q.Items, QuotedLine{
 			ID:        item.ID,
 			Name:      item.Name,
 			Qty:       line.Qty,
-			UnitCents: item.PriceCents,
+			Size:      size,
+			UnitCents: unitCents,
 			LineCents: lineCents,
 		})
 		q.SubtotalCents += lineCents

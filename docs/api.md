@@ -33,12 +33,14 @@ Request:
 
 ```json
 {
-  "items": [{ "id": "latte", "qty": 2 }],
+  "items": [{ "id": "latte", "qty": 2, "size": "large" }],
   "code": "WELCOME10"
 }
 ```
 
 - `items` is required and must not be empty. `qty` is 1–20.
+- `size` is optional: `small`, `medium`, or `large` (lowercase). It defaults
+  to `medium`.
 - `code` is optional and case-insensitive.
 
 Response `200`:
@@ -46,25 +48,31 @@ Response `200`:
 ```json
 {
   "items": [
-    { "id": "latte", "name": "Latte", "qty": 2, "unit_cents": 450, "line_cents": 900 }
+    { "id": "latte", "name": "Latte", "qty": 2, "size": "large", "unit_cents": 525, "line_cents": 1050 }
   ],
-  "subtotal_cents": 900,
-  "discount_cents": 90,
-  "tax_cents": 71,
-  "total_cents": 881
+  "subtotal_cents": 1050,
+  "discount_cents": 105,
+  "tax_cents": 83,
+  "total_cents": 1028
 }
 ```
 
+Each line's `size` is always present, and is `medium` when the request left it
+out.
+
 Pricing rules:
 
-1. `subtotal_cents` is the sum of `line_cents`.
-2. `discount_cents` is the code's percentage of the subtotal, rounded down.
-3. Tax is 8.75% of `subtotal_cents - discount_cents`, rounded half up.
-4. `total_cents = subtotal_cents - discount_cents + tax_cents`.
+1. `unit_cents` is the menu price adjusted for size: `small` is 50 cents less,
+   `medium` is the menu price, and `large` is 75 cents more.
+   `line_cents = unit_cents × qty`.
+2. `subtotal_cents` is the sum of `line_cents`.
+3. `discount_cents` is the code's percentage of the subtotal, rounded down.
+4. Tax is 8.75% of `subtotal_cents - discount_cents`, rounded half up.
+5. `total_cents = subtotal_cents - discount_cents + tax_cents`.
 
 Errors return a JSON body `{"error": "..."}`:
 
 | Status | When |
 |--------|------|
 | `400` | Body is not valid JSON, or `items` is empty |
-| `422` | Unknown item, `qty` out of range, or unknown discount code |
+| `422` | Unknown item, `qty` out of range, unknown `size`, or unknown discount code |

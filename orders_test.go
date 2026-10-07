@@ -29,6 +29,21 @@ func TestQuoteOrder(t *testing.T) {
 			// 700 subtotal, 70 off, 630 taxable, tax 55.125 -> 55
 			want: Quote{SubtotalCents: 700, DiscountCents: 70, TaxCents: 55, TotalCents: 685},
 		},
+		{
+			name: "small and large sizes",
+			req: OrderRequest{Items: []OrderLine{
+				{ID: "latte", Qty: 1, Size: "small"},
+				{ID: "espresso", Qty: 2, Size: "large"},
+			}},
+			// 400 + 2*375 = 1150 subtotal, tax 100.625 -> 101
+			want: Quote{SubtotalCents: 1150, TaxCents: 101, TotalCents: 1251},
+		},
+		{
+			name: "explicit medium matches menu price",
+			req:  OrderRequest{Items: []OrderLine{{ID: "latte", Qty: 2, Size: "medium"}}},
+			want: Quote{SubtotalCents: 900, TaxCents: 79, TotalCents: 979},
+		},
+		{name: "unknown size", req: OrderRequest{Items: []OrderLine{{ID: "latte", Qty: 1, Size: "venti"}}}, wantErr: true},
 		{name: "empty", req: OrderRequest{}, wantErr: true},
 		{name: "unknown item", req: OrderRequest{Items: []OrderLine{{ID: "tea", Qty: 1}}}, wantErr: true},
 		{name: "zero qty", req: OrderRequest{Items: []OrderLine{{ID: "latte", Qty: 0}}}, wantErr: true},
@@ -54,6 +69,30 @@ func TestQuoteOrder(t *testing.T) {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestQuoteOrderLineSizes(t *testing.T) {
+	got, err := quoteOrder(OrderRequest{Items: []OrderLine{
+		{ID: "latte", Qty: 1},
+		{ID: "latte", Qty: 1, Size: "small"},
+		{ID: "latte", Qty: 2, Size: "large"},
+	}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []QuotedLine{
+		{ID: "latte", Name: "Latte", Qty: 1, Size: "medium", UnitCents: 450, LineCents: 450},
+		{ID: "latte", Name: "Latte", Qty: 1, Size: "small", UnitCents: 400, LineCents: 400},
+		{ID: "latte", Name: "Latte", Qty: 2, Size: "large", UnitCents: 525, LineCents: 1050},
+	}
+	if len(got.Items) != len(want) {
+		t.Fatalf("got %d lines, want %d", len(got.Items), len(want))
+	}
+	for i := range want {
+		if got.Items[i] != want[i] {
+			t.Errorf("line %d = %+v, want %+v", i, got.Items[i], want[i])
+		}
 	}
 }
 
